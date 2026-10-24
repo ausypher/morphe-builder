@@ -24,7 +24,15 @@ jobs:
         with:
           fetch-depth: 0
           submodules: true
-
+          
+      - name: Restore signing keystore
+        env:
+          MORPHE_KEYSTORE_BASE64: ${{ secrets.MORPHE_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$MORPHE_KEYSTORE_BASE64"
+          printf '%s' "$MORPHE_KEYSTORE_BASE64" | base64 --decode > Morphe.keystore
+          chmod 600 Morphe.keystore
+          
       - name: Update config
         if: ${{ inputs.from_ci }}
         run: |
@@ -51,7 +59,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: $GITHUB_REPOSITORY
           NEXT_VER_CODE: ${{ steps.next_ver_code.outputs.NEXT_VER_CODE }}
-
+          
       - name: Get output
         id: get_output
         run: |
@@ -60,20 +68,77 @@ jobs:
           cat build.md >> "$GITHUB_OUTPUT"
           echo "${DELIM}" >> "$GITHUB_OUTPUT"
           cp -f build.md build.tmp
-
+          
       - name: Upload release
+        id: upload_release
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ steps.next_ver_code.outputs.NEXT_VER_CODE }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BODY: ${{ steps.get_output.outputs.BUILD_LOG }}
         run: |
+          set -euo pipefail
+
           ls -lh ./build/*
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release edit "$TAG" --title "Release" --notes "$BODY"
-            gh release upload "$TAG" ./build/* --clobber
-          else
-            gh release create "$TAG" ./build/* --title "Release" --notes "$BODY"
+
+          PATCH_VERSION=$(grep -m1 '^Patches:' build.md |
+            grep -oE '[0-9]+(\.[0-9]+)+' | head -n1 || true)
+
+          if [ -z "$PATCH_VERSION" ]; then
+            echo "::error::Could not determine patch version from build.md"
+            exit 1
           fi
+
+          DATE=$(date -u +%F)
+          TAG=""
+          MAX_ATTEMPTS=100
+
+          for ATTEMPT in $(seq 1 "$MAX_ATTEMPTS"); do
+            if [ "$ATTEMPT" -eq 1 ]; then
+              CANDIDATE="$DATE"
+            else
+              CANDIDATE="$DATE-$((ATTEMPT - 1))"
+            fi
+
+            if gh release view "$CANDIDATE" >/dev/null 2>&1; then
+              echo "Release $CANDIDATE already exists; trying next tag."
+              continue
+            fi
+
+            if gh release create "$CANDIDATE" \
+              --target "$GITHUB_SHA" \
+              --title "$PATCH_VERSION" \
+              --notes "$BODY"; then
+              TAG="$CANDIDATE"
+              break
+            fi
+
+            if gh release view "$CANDIDATE" >/dev/null 2>&1; then
+              echo "Tag $CANDIDATE was taken concurrently; trying next tag."
+              continue
+            fi
+
+            echo "::error::Could not create release $CANDIDATE"
+            exit 1
+          done
+
+          if [ -z "$TAG" ]; then
+            echo "::error::Could not allocate a unique release tag"
+            exit 1
+          fi
+
+          gh release upload "$TAG" ./build/* --clobber
+
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+          echo "PATCH_VERSION=$PATCH_VERSION" >> "$GITHUB_OUTPUT"
+
+          echo "Created release $TAG ($PATCH_VERSION)"
+
+
+          gh release upload "$TAG" ./build/* --clobber
+
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+          echo "PATCH_VERSION=$PATCH_VERSION" >> "$GITHUB_OUTPUT"
+
+          echo "Created release $TAG ($PATCH_VERSION)"
 
       - name: Update modules changelog and update json
         id: update_config
@@ -97,7 +162,7 @@ jobs:
             UPDATE_JSON="${UPDATE_JSON##*/}"
             VER=$(echo "$ZIP_S" | grep version=)
             VER="${VER##*=}"
-            DLURL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/${{ steps.next_ver_code.outputs.NEXT_VER_CODE }}/${OUTPUT}"
+            DLURL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/${{ steps.upload_release.outputs.TAG }}/${OUTPUT}"
             get_update_json "$VER" "$DLURL" >"../$UPDATE_JSON"
           done
           cd ..
@@ -126,7 +191,7 @@ jobs:
         run: |
           cd build || { echo "build folder not found"; exit 1; }
 
-          BUILD_NUM="${{ steps.next_ver_code.outputs.NEXT_VER_CODE }}"
+          BUILD_NUM="${{ steps.upload_release.outputs.TAG }}"
           RELEASE_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$BUILD_NUM"
           cd ..
 
@@ -164,7 +229,7 @@ jobs:
               fi
           done < <(grep -E '^[A-Za-z0-9 _-]+(\s*\([^)]+\))?:\s*[0-9]' build.md)
 
-          MSG=$(printf '%b' "🚀 *New Morphe CI Build Available!*\n${PKG_LINES}\n\n*Build Info:*\n• Build: \`#${BUILD_NUM}\`\n• CLI: \`v${CLI_VER}\`\n\n*Patches:*\n${PATCHES_BLOCK}\n\n*What's Included:*\n• Root modules (Magisk/KernelSU)\n• Non-root APKs (requires MicroG)\n\n*Installation:*\n• Root: Flash module via Magisk/KernelSU\n• Non-root: Install APK + [MicroG-RE](https://github.com/MorpheApp/MicroG-RE/releases)\n\n*Links:*\n${LINKS}\n\n_Built with ❤️ by_ [𝙴𝙻𝙾𝙷𝙸𝙼](https://t.me/elohim152)")
+          MSG=$(printf '%b' "🚀 *New Morphe CI Build Available!*\n${PKG_LINES}\n\n*Build Info:*\n• Build: \`${BUILD_NUM}\`\n• CLI: \`v${CLI_VER}\`\n\n*Patches:*\n${PATCHES_BLOCK}\n\n*What's Included:*\n• Root modules (Magisk/KernelSU)\n• Non-root APKs (requires MicroG)\n\n*Installation:*\n• Root: Flash module via Magisk/KernelSU\n• Non-root: Install APK + [MicroG-RE](https://github.com/MorpheApp/MicroG-RE/releases)\n\n*Links:*\n${LINKS}\n\n_Built with ❤️ by_ [𝙴𝙻𝙾𝙷𝙸𝙼](https://t.me/elohim152)")
 
           cd build
 
