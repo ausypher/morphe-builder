@@ -371,8 +371,8 @@ merge_splits() {
 		return 1
 	fi
 	# sign the merged stock apk
-	if ! OP=$(java -jar "$APKSIGNER" sign --ks ks-p12.keystore --ks-pass pass:123456789 --key-pass pass:123456789 --ks-key-alias jhc \
-		--out "${output}" "${output}-unsigned"); then
+	if ! OP=$(java -jar "$APKSIGNER" sign --ks Morphe.keystore --ks-pass pass:Morphe --key-pass pass: --ks-key-alias Morphe \
+	--out "${output}" "${output}-unsigned"); then
 		epr "apksigner error: $OP"
 		return 1
 	fi
@@ -589,8 +589,8 @@ patch_apk() {
 	local tmp_files
 	tmp_files="$(pwd)/$(mktemp -d -p "$TEMP_DIR")"
 
-	local cmd="java -jar '$cli_jar' patch '$stock_input' -o '$patched_apk' -p '$patches_jar' --keystore=ks.keystore \
---keystore-entry-password=123456789 --keystore-password=123456789 --signer=jhc --keystore-entry-alias=jhc -t '$tmp_files' $patcher_args"
+	local cmd="java -jar '$cli_jar' patch '$stock_input' -o '$patched_apk' -p '$patches_jar' --keystore=Morphe.keystore \
+--keystore-entry-password=Morphe --keystore-password= --signer=Morphe --keystore-entry-alias=Morphe -t '$tmp_files' $patcher_args"
 
 	# TODO: remove this later
 	local cli_name
