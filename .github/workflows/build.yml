@@ -59,7 +59,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GITHUB_REPOSITORY: $GITHUB_REPOSITORY
           NEXT_VER_CODE: ${{ steps.next_ver_code.outputs.NEXT_VER_CODE }}
-
+          
       - name: Get output
         id: get_output
         run: |
@@ -68,7 +68,7 @@ jobs:
           cat build.md >> "$GITHUB_OUTPUT"
           echo "${DELIM}" >> "$GITHUB_OUTPUT"
           cp -f build.md build.tmp
-
+          
       - name: Upload release
         id: upload_release
         env:
@@ -89,20 +89,19 @@ jobs:
 
           DATE=$(date -u +%F)
           TAG=""
+          MAX_ATTEMPTS=100
 
-          for ATTEMPT in $(seq 1 100); do
-            MAX_NUM=$(gh release list --limit 1000 \
-              --json tagName --jq '.[].tagName' |
-              awk -v prefix="$DATE-" '
-                index($0, prefix) == 1 {
-                  suffix = substr($0, length(prefix) + 1)
-                  if (suffix ~ /^[0-9]+$/ && suffix + 0 > max)
-                    max = suffix + 0
-                }
-                END { print max + 0 }
-              ')
+          for ATTEMPT in $(seq 1 "$MAX_ATTEMPTS"); do
+            if [ "$ATTEMPT" -eq 1 ]; then
+              CANDIDATE="$DATE"
+            else
+              CANDIDATE="$DATE-$((ATTEMPT - 1))"
+            fi
 
-            CANDIDATE="$DATE-$((MAX_NUM + 1))"
+            if gh release view "$CANDIDATE" >/dev/null 2>&1; then
+              echo "Release $CANDIDATE already exists; trying next tag."
+              continue
+            fi
 
             if gh release create "$CANDIDATE" \
               --target "$GITHUB_SHA" \
@@ -113,7 +112,7 @@ jobs:
             fi
 
             if gh release view "$CANDIDATE" >/dev/null 2>&1; then
-              echo "Tag $CANDIDATE was taken; trying next number."
+              echo "Tag $CANDIDATE was taken concurrently; trying next tag."
               continue
             fi
 
@@ -125,6 +124,14 @@ jobs:
             echo "::error::Could not allocate a unique release tag"
             exit 1
           fi
+
+          gh release upload "$TAG" ./build/* --clobber
+
+          echo "TAG=$TAG" >> "$GITHUB_OUTPUT"
+          echo "PATCH_VERSION=$PATCH_VERSION" >> "$GITHUB_OUTPUT"
+
+          echo "Created release $TAG ($PATCH_VERSION)"
+
 
           gh release upload "$TAG" ./build/* --clobber
 
