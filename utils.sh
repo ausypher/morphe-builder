@@ -382,65 +382,6 @@ merge_splits() {
 }
 
 # -------------------- apkcombo --------------------
-# APKCombo source implementation. Fallback order: direct -> APKCombo -> archive.
-apkcombo_search() {
-	local resp="$1" dpi="$2" arch="$3"
-	local row row_arch row_dpi row_type href selected="" fallback=""
-	local n
-
-	for ((n = 1; n <= 30; n++)); do
-		row=$($HTMLQ "#best-variant-tab > :nth-child($n)" <<<"$resp")
-		[ -n "$row" ] || break
-
-		row_type=$($HTMLQ --text "span" <<<"$row" | tr '\n' ' ' | xargs)
-		[[ "${row_type^^}" == *APK* && "${row_type^^}" != *BUNDLE* ]] || continue
-
-		row_arch=$($HTMLQ --text ".blur" <<<"$row" | tr '\n' ' ' | xargs)
-		row_dpi=$($HTMLQ --text ".spec" <<<"$row" | sed -n '3p' | xargs)
-		href=$($HTMLQ --base https://apkcombo.app --attribute href "a" <<<"$row")
-		[ -n "$href" ] || continue
-
-		local arch_ok=false dpi_ok=false
-		if [ "$arch" = "all" ] || [ "$arch" = "universal" ] || [ "$arch" = "noarch" ]; then
-			[[ "$row_arch" == *universal* || "$row_arch" == *noarch* || "$row_arch" == *"$arch"* ]] && arch_ok=true
-		else
-			[[ ", $row_arch, " == *", $arch,"* ]] && arch_ok=true
-		fi
-		if [ "$row_dpi" = "$dpi" ] || [ "$row_dpi" = "nodpi" ] || [ "$row_dpi" = "anydpi" ] || [ "$row_dpi" = "any" ]; then dpi_ok=true; fi
-
-		if [ "$arch_ok" = true ] && [ "$dpi_ok" = true ]; then
-			echo "$href"
-			return 0
-		fi
-		if [ "$arch_ok" = true ] && [ -z "$fallback" ]; then fallback="$href"; fi
-		if [ -z "$fallback" ] && { [[ "$row_arch" == *universal* ]] || [[ "$row_arch" == *noarch* ]]; }; then fallback="$href"; fi
-	done
-
-	[ -n "$fallback" ] || return 1
-	echo "$fallback"
-}
-dl_apkcombo() {
-	local url=$1 version=${2// /-} output=$3 arch=$4 dpi=$5
-	[ "$arch" = "arm-v7a" ] && arch="armeabi-v7a"
-	local variants_url="${url}/download/phone-${version}-apk"
-	local resp variant_url checkin final_url
-
-	resp=$(req "$variants_url" -) || return 1
-	variant_url=$(apkcombo_search "$resp" "$dpi" "$arch") || {
-		epr "APKCombo has no matching APK variant for version '$version', arch '$arch', dpi '$dpi'"
-		return 1
-	}
-	checkin=$(req "https://apkcombo.app/checkin" -) || return 1
-	[ -n "$checkin" ] || { epr "APKCombo returned an empty check-in token"; return 1; }
-	final_url="${variant_url}&${checkin}"
-
-	req "$final_url" "$output" || return 1
-	if [ ! -s "$output" ] || ! unzip -t "$output" >/dev/null 2>&1; then
-		rm -f "$output"
-		epr "APKCombo returned an invalid or incomplete APK"
-		return 1
-	fi
-}
 get_apkcombo_vers() {
 	$HTMLQ --text ".list-versions .vername" <<<"$__APKCOMBO_RESP__" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -E '^[0-9]+([.][0-9]+)+([.-][A-Za-z0-9.-]+)?$' || :
 }
@@ -448,8 +389,12 @@ get_apkcombo_pkg_name() { echo "${__APKCOMBO_URL__##*/}"; }
 get_apkcombo_resp() {
 	__APKCOMBO_URL="${1%/}"
 	__APKCOMBO_RESP__=$(req "${__APKCOMBO_URL}/old-versions" -) || return 1
-	# A valid versions page must contain the versions list expected by APKCombo.
 	$HTMLQ ".list-versions" <<<"$__APKCOMBO_RESP__" | grep -q . || return 1
+}
+dl_apkcombo() {
+	local url=$1 version=${2// /-} output=$3 arch=$4 dpi=$5
+	[ "$arch" = "arm-v7a" ] && arch="armeabi-v7a"
+	python3 "$CWD/apkcombo.py" "$url" "$version" "$output" "$arch" "$dpi"
 }
 
 # -------------------- uptodown --------------------
