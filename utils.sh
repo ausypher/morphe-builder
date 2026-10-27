@@ -451,9 +451,11 @@ dl_apkmirror() {
 		return 1
 	fi
 
-	# Prefer the requested architecture, then try the universal APK.
-	# YouTube's nodpi APKMirror variant is universal, not arm64-only/armv7-only.
-	for candidate_arch in "$apkmd_arch" universal; do
+	# Prefer APKMirror's universal variant. The build step below strips
+	# unwanted native libraries for each target architecture before patching.
+	local candidate_arches=(universal)
+	[ "$apkmd_arch" = "universal" ] || candidate_arches+=("$apkmd_arch")
+	for candidate_arch in "${candidate_arches[@]}"; do
 		for type in apk bundle; do
 			previous_density=""
 			for density in "$apkmd_dpi" nodpi; do
@@ -474,7 +476,6 @@ dl_apkmirror() {
 				fi
 			done
 		done
-		[ "$candidate_arch" = "universal" ] && break
 	done
 
 	epr "APKMirror Downloader could not obtain $org/$repo_name version=$version arch=$apkmd_arch dpi=$apkmd_dpi (including universal fallback)"
