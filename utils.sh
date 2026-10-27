@@ -409,37 +409,46 @@ dl_apkpure() {
 	mkdir -p "$download_dir" || return 1
 	find "$download_dir" -maxdepth 1 -type f -delete
 	pr "apkeep APKPure download: package=$pkg version=$version arch=$arch"
-	local resp
-	if ! resp=$(apkeep -a "${pkg}@${version}" -d apk-pure -o "acknowledge_dangers=true,arch=$arch" "$download_dir" 2>&1); then
-		epr "apkeep download failed: $resp"
-		find "$download_dir" -maxdepth 1 -type f -delete
-		return 1
-	fi
+	local resp status=0
+	apkeep -a "${pkg}@${version}" -d apk-pure -o "acknowledge_dangers=true,arch=$arch" "$download_dir" >"${download_dir}/apkeep.log" 2>&1 || status=$?
+	resp=$(cat "${download_dir}/apkeep.log")
 	local downloaded
 	downloaded=$(find "$download_dir" -maxdepth 1 -type f \( -name '*.apk' -o -name '*.xapk' \) -print -quit)
 	if [ -z "$downloaded" ]; then
-		epr "apkeep finished without producing an APK/XAPK: $resp"
+		epr "apkeep did not produce an APK/XAPK (exit=$status). Full apkeep output:"
+		while IFS= read -r line; do
+			[ -n "$line" ] && epr "apkeep: $line"
+		done <<<"$resp"
+		rm -f "${download_dir}/apkeep.log"
+		return 1
+	fi
+	if [ "$status" -ne 0 ]; then
+		epr "apkeep returned exit code $status despite producing $downloaded"
+		rm -f "$downloaded" "${download_dir}/apkeep.log"
 		return 1
 	fi
 	case "${downloaded##*.}" in
 		xapk)
 			if ! merge_splits "$downloaded" "$output"; then
-				rm -f "$output"
+				rm -f "$output" "$downloaded" "${download_dir}/apkeep.log"
 				return 1
 			fi
 			;;
 		apk)
-			mv -f "$downloaded" "$output" || return 1
+			mv -f "$downloaded" "$output" || {
+				rm -f "${download_dir}/apkeep.log"
+				return 1
+			}
 			;;
 		*)
 			epr "Unsupported APKPure output: $downloaded"
+			rm -f "${download_dir}/apkeep.log"
 			return 1
 			;;
 	esac
-	rm -f "$downloaded"
+	rm -f "$downloaded" "${download_dir}/apkeep.log"
 	return 0
 }
-
 # -------------------- uptodown --------------------
 get_uptodown_resp() {
 	__UPTODOWN_RESP__=$(req "${1}/versions" -) || return 1
