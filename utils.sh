@@ -382,8 +382,7 @@ merge_splits() {
 }
 
 # -------------------- apkcombo --------------------
-# APKCombo source implementation. Keep this source in the existing APKMirror
-# position so fallback order remains: direct -> APKCombo -> archive.
+# APKCombo source implementation. Fallback order: direct -> APKCombo -> archive.
 apkcombo_search() {
 	local resp="$1" dpi="$2" arch="$3"
 	local row row_arch row_dpi row_type href selected="" fallback=""
