@@ -289,24 +289,20 @@ with open(cookie_path, encoding="utf-8") as handle:
     cookie_data = json.load(handle)
 
 session = requests.Session()
-for cookie in cookie_data:
-    name = cookie.get("name")
-    value = cookie.get("value")
-    if not name or value is None:
-        continue
-    session.cookies.set(
-        name,
-        value,
-        domain=cookie.get("domain") or ".apkmirror.com",
-        path=cookie.get("path") or "/",
-        secure=bool(cookie.get("secure", False)),
-    )
+# Match upstream Morphe-Builder behavior: pass the cookies returned by
+# the FlareSolverr download-page response directly to requests.get().
+cookies = {
+    cookie["name"]: cookie["value"]
+    for cookie in cookie_data
+    if cookie.get("name") and cookie.get("value") is not None
+}
 
 temporary_output = output + ".download-tmp"
 try:
     with session.get(
         url,
         headers={"Referer": referer, "User-Agent": user_agent},
+        cookies=cookies,
         stream=True,
         timeout=(15, 120),
         allow_redirects=True,
