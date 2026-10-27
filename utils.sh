@@ -5,7 +5,7 @@ CWD=$(pwd)
 TEMP_DIR="temp"
 BIN_DIR="bin"
 BUILD_DIR="build"
-DL_SRCS=("direct" "archive" "apkmirror")
+DL_SRCS=("direct" "apkpure" "archive")
 
 if [ "${GITHUB_TOKEN-}" ]; then GH_HEADER="Authorization: token ${GITHUB_TOKEN}"; else GH_HEADER=; fi
 NEXT_VER_CODE=${NEXT_VER_CODE:-$(date +'%Y%m%d')}
@@ -380,106 +380,63 @@ merge_splits() {
 	return 0
 }
 
-# -------------------- apkmirror --------------------
-apkmirror_search() {
-	local resp="$1" dpi="$2" arch="$3" apk_bundle="$4"
-	local dlurl="" node app_table emptyCheck
-
-	local apparch=('universal' 'noarch' 'arm64-v8a + armeabi-v7a')
-	if [ "$arch" != "all" ]; then
-		apparch+=("$arch")
-	fi
-
-	local appdpi=("nodpi" "anydpi")
-	if [ "$dpi" ]; then
-		appdpi+=($dpi)
-	fi
-
-	for ((n = 1; n < 40; n++)); do
-		node=$($HTMLQ "div.table-row.headerFont:nth-last-child($n)" -r "span:nth-child(n+3)" <<<"$resp")
-		if [ -z "$node" ]; then break; fi
-		emptyCheck=$($HTMLQ -t -w "div.table-cell:nth-child(1) > a:nth-child(1)" <<<"$node" | xargs)
-		if [ -z "$emptyCheck" ]; then break; fi
-		app_table=$($HTMLQ --text --ignore-whitespace <<<"$node")
-		if [ "$(sed -n 3p <<<"$app_table")" != "$apk_bundle" ]; then continue; fi
-		dlurl=$($HTMLQ --base https://www.apkmirror.com --attribute href "div:nth-child(1) > a:nth-child(1)" <<<"$node")
-		if isoneof "$(sed -n 6p <<<"$app_table")" "${appdpi[@]}" &&
-			isoneof "$(sed -n 4p <<<"$app_table")" "${apparch[@]}"; then
-			echo "$dlurl"
-			return 0
-		fi
-	done
-	if [ "$n" -eq 2 ] && [ "$dlurl" ]; then
-		# only one apk exists, return it
-		echo "$dlurl"
-		return 0
-	fi
-	return 1
+# -------------------- APKPure via apkeep --------------------
+get_apkpure_resp() {
+	__APKPURE_PKG_NAME="${1%/}"
+	[ -n "$__APKPURE_PKG_NAME" ]
 }
-dl_apkmirror() {
-	local url=$1 version=${2// /-} output=$3 arch=$4 dpi=$5 is_bundle=false
-
-	if [ -f "${output}.apkm" ]; then
-		merge_splits "${output}.apkm" "${output}"
-		return 0
+get_apkpure_pkg_name() { echo "$__APKPURE_PKG_NAME"; }
+get_apkpure_vers() {
+	if ! command -v apkeep >/dev/null 2>&1; then
+		epr "apkeep is not installed"
+		return 1
 	fi
-
+	local resp
+	resp=$(apkeep -l -a "$__APKPURE_PKG_NAME" -d apk-pure -o 'output_format=json' 2>&1) || {
+		epr "apkeep could not list APKPure versions: $resp"
+		return 1
+	}
+	jq -r '.apps[]?.available_versions[]?.version // empty' <<<"$resp"
+}
+dl_apkpure() {
+	local pkg="${1%/}" version="${2// /}" output=$3 arch=$4 _dpi=${5-}
+	if ! command -v apkeep >/dev/null 2>&1; then
+		epr "apkeep is not installed"
+		return 1
+	fi
 	if [ "$arch" = "arm-v7a" ]; then arch="armeabi-v7a"; fi
-	local resp node app_table apkmname dlurl=""
-	apkmname=$($HTMLQ "h1.marginZero" --text <<<"$__APKMIRROR_RESP__")
-	apkmname="${apkmname,,}" apkmname="${apkmname// /-}" apkmname="${apkmname//[^a-z0-9-]/}"
-	url="${url}/${apkmname}-${version//./-}-release/"
-	resp=$(req "$url" -) || return 1
-	node=$($HTMLQ "div.table-row.headerFont:nth-last-child(1)" -r "span:nth-child(n+3)" <<<"$resp")
-	if [ "$node" ]; then
-		for type in APK BUNDLE; do
-			if dlurl=$(apkmirror_search "$resp" "$dpi" "$arch" "$type"); then
-				if [ "$type" = "BUNDLE" ]; then
-					is_bundle=true
-				else is_bundle=false; fi
-				break 2
+	local download_dir="${TEMP_DIR}/apkpure-download"
+	mkdir -p "$download_dir" || return 1
+	find "$download_dir" -maxdepth 1 -type f -delete
+	pr "apkeep APKPure download: package=$pkg version=$version arch=$arch"
+	local resp
+	if ! resp=$(apkeep -a "${pkg}@${version}" -d apk-pure -o "acknowledge_dangers=true,arch=$arch" "$download_dir" 2>&1); then
+		epr "apkeep download failed: $resp"
+		find "$download_dir" -maxdepth 1 -type f -delete
+		return 1
+	fi
+	local downloaded
+	downloaded=$(find "$download_dir" -maxdepth 1 -type f \( -name '*.apk' -o -name '*.xapk' \) -print -quit)
+	if [ -z "$downloaded" ]; then
+		epr "apkeep finished without producing an APK/XAPK: $resp"
+		return 1
+	fi
+	case "${downloaded##*.}" in
+		xapk)
+			if ! merge_splits "$downloaded" "$output"; then
+				rm -f "$output"
+				return 1
 			fi
-		done
-		if [ -z "$dlurl" ]; then return 1; fi
-		resp=$(req "$dlurl" -)
-	fi
-	url=$(echo "$resp" | $HTMLQ --base https://www.apkmirror.com --attribute href "a.btn") || return 1
-	url=$(req "$url" - | $HTMLQ --base https://www.apkmirror.com --attribute href "span > a[rel = nofollow]") || return 1
-
-	if [ "$is_bundle" = true ]; then
-		req "$url" "${output}.apkm" || return 1
-		merge_splits "${output}.apkm" "${output}"
-	else
-		req "$url" "${output}" || return 1
-	fi
-}
-get_apkmirror_vers() {
-	local vers apkm_resp
-	apkm_resp=$(req "https://www.apkmirror.com/uploads/?appcategory=${__APKMIRROR_CAT__}" -)
-	vers=$(sed -n 's;.*Version:</span><span class="infoSlide-value">\(.*\) </span>.*;\1;p' <<<"$apkm_resp" | awk '{$1=$1}1')
-
-	vers=$(grep -iv "\(beta\|alpha\)" <<<"$vers")
-	local v r_vers=()
-	local IFS=$'\n'
-	for v in $vers; do
-		grep -iq "${v} \(beta\|alpha\)" <<<"$apkm_resp" || r_vers+=("$v")
-	done
-	echo "${r_vers[*]}"
-}
-get_apkmirror_pkg_name() {
-	case "${__APKMIRROR_CAT__}" in
-		youtube) echo "com.google.android.youtube" ;;
-		youtube-music) echo "com.google.android.apps.youtube.music" ;;
-		google-photos|photos) echo "com.google.android.apps.photos" ;;
-		*) epr "APKMirror Downloader integration needs an explicit pkg-name for '${__APKMIRROR_CAT__}'"; return 1 ;;
+			;;
+		apk)
+			mv -f "$downloaded" "$output" || return 1
+			;;
+		*)
+			epr "Unsupported APKPure output: $downloaded"
+			return 1
+			;;
 	esac
-}
-get_apkmirror_resp() {
-	# APKMirror HTML pages return HTTP 403 in Actions. Do not scrape them;
-	# APKMirror Downloader performs the actual variant lookup and download.
-	__APKMIRROR_RESP__=""
-	__APKMIRROR_CAT__="${1%/}"
-	__APKMIRROR_CAT__="${__APKMIRROR_CAT__##*/}"
+	rm -f "$downloaded"
 	return 0
 }
 
