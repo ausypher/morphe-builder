@@ -492,10 +492,21 @@ get_apkmirror_vers() {
 	done
 	echo "${r_vers[*]}"
 }
-get_apkmirror_pkg_name() { sed -n 's;.*id=\(.*\)" class="accent_color.*;\1;p' <<<"$__APKMIRROR_RESP__"; }
+get_apkmirror_pkg_name() {
+	case "${__APKMIRROR_CAT__}" in
+		youtube) echo "com.google.android.youtube" ;;
+		youtube-music) echo "com.google.android.apps.youtube.music" ;;
+		google-photos|photos) echo "com.google.android.apps.photos" ;;
+		*) epr "APKMirror Downloader integration needs an explicit pkg-name for '${__APKMIRROR_CAT__}'"; return 1 ;;
+	esac
+}
 get_apkmirror_resp() {
-	__APKMIRROR_RESP__=$(req "${1}" -) || return 1
-	__APKMIRROR_CAT__="${1##*/}"
+	# APKMirror HTML pages return HTTP 403 in Actions. Do not scrape them;
+	# APKMirror Downloader performs the actual variant lookup and download.
+	__APKMIRROR_RESP__=""
+	__APKMIRROR_CAT__="${1%/}"
+	__APKMIRROR_CAT__="${__APKMIRROR_CAT__##*/}"
+	return 0
 }
 
 # -------------------- uptodown --------------------
