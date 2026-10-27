@@ -417,69 +417,41 @@ apkmirror_search() {
 	return 1
 }
 dl_apkmirror() {
-	local url=$1 version=${2// /-} output=$3 arch=$4 dpi=$5
-	local parent org repo_name apkmd_arch apkmd_dpi result type candidate_arch density downloaded previous_density
-	local apkmd_dir="${TEMP_DIR}/apkmd"
+	local url=$1 version=${2// /-} output=$3 arch=$4 dpi=$5 is_bundle=false
 
-	parent=${url%/}
-	repo_name=${parent##*/}
-	parent=${parent%/*}
-	org=${parent##*/}
-	if [ -z "$org" ] || [ -z "$repo_name" ] || [ "$parent" = "$url" ]; then
-		epr "Invalid APKMirror URL: $url"
-		return 1
+	if [ -f "${output}.apkm" ]; then
+		merge_splits "${output}.apkm" "${output}"
+		return 0
 	fi
 
-	if [ "$arch" = "arm-v7a" ]; then
-		apkmd_arch="armeabi-v7a"
-	elif [ "$arch" = "all" ]; then
-		apkmd_arch="universal"
-	else
-		apkmd_arch="$arch"
-	fi
-
-	if [ -z "$dpi" ] || [ "$dpi" = "any" ]; then
-		apkmd_dpi="nodpi"
-	elif [[ "$dpi" =~ ^[0-9]+$ ]]; then
-		apkmd_dpi="${dpi}dpi"
-	else
-		apkmd_dpi="$dpi"
-	fi
-
-	if [ ! -f "$apkmd_dir/node_modules/apkmirror-downloader/dist/index.js" ]; then
-		epr "APKMirror Downloader is not installed"
-		return 1
-	fi
-
-	# Prefer APKMirror's universal variant. The build step below strips
-	# unwanted native libraries for each target architecture before patching.
-	local candidate_arches=(universal)
-	[ "$apkmd_arch" = "universal" ] || candidate_arches+=("$apkmd_arch")
-	for candidate_arch in "${candidate_arches[@]}"; do
-		for type in apk bundle; do
-			previous_density=""
-			for density in "$apkmd_dpi" nodpi; do
-				[ "$density" = "$previous_density" ] && continue
-				previous_density="$density"
-				rm -f "$apkmd_dir"/download*
-				pr "APKMirror Downloader: $org/$repo_name version=$version arch=$candidate_arch dpi=$density type=$type"
-				bun "$CWD/scripts/apkmirror-download.mjs" "$apkmd_dir" "$org" "$repo_name" "$version" "$candidate_arch" "$density" "$type" || :
-				downloaded=$(find "$apkmd_dir" -maxdepth 1 -type f -name 'download*' -size +0c -print -quit)
-				if [ -n "$downloaded" ]; then
-					if [[ "$downloaded" == *.apkm ]] || [ "$type" = "bundle" ]; then
-						mv -f "$downloaded" "${output}.apkm"
-						merge_splits "${output}.apkm" "$output"
-						return $?
-					fi
-					mv -f "$downloaded" "$output"
-					return 0
-				fi
-			done
+	if [ "$arch" = "arm-v7a" ]; then arch="armeabi-v7a"; fi
+	local resp node app_table apkmname dlurl=""
+	apkmname=$($HTMLQ "h1.marginZero" --text <<<"$__APKMIRROR_RESP__")
+	apkmname="${apkmname,,}" apkmname="${apkmname// /-}" apkmname="${apkmname//[^a-z0-9-]/}"
+	url="${url}/${apkmname}-${version//./-}-release/"
+	resp=$(req "$url" -) || return 1
+	node=$($HTMLQ "div.table-row.headerFont:nth-last-child(1)" -r "span:nth-child(n+3)" <<<"$resp")
+	if [ "$node" ]; then
+		for type in APK BUNDLE; do
+			if dlurl=$(apkmirror_search "$resp" "$dpi" "$arch" "$type"); then
+				if [ "$type" = "BUNDLE" ]; then
+					is_bundle=true
+				else is_bundle=false; fi
+				break 2
+			fi
 		done
-	done
+		if [ -z "$dlurl" ]; then return 1; fi
+		resp=$(req "$dlurl" -)
+	fi
+	url=$(echo "$resp" | $HTMLQ --base https://www.apkmirror.com --attribute href "a.btn") || return 1
+	url=$(req "$url" - | $HTMLQ --base https://www.apkmirror.com --attribute href "span > a[rel = nofollow]") || return 1
 
-	epr "APKMirror Downloader could not obtain $org/$repo_name version=$version arch=$apkmd_arch dpi=$apkmd_dpi (including universal fallback)"
-	return 1
+	if [ "$is_bundle" = true ]; then
+		req "$url" "${output}.apkm" || return 1
+		merge_splits "${output}.apkm" "${output}"
+	else
+		req "$url" "${output}" || return 1
+	fi
 }
 get_apkmirror_vers() {
 	local vers apkm_resp
