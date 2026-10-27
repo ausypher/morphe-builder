@@ -454,7 +454,6 @@ dl_apkmirror() {
 	# Prefer the requested architecture, then try the universal APK.
 	# YouTube's nodpi APKMirror variant is universal, not arm64-only/armv7-only.
 	for candidate_arch in "$apkmd_arch" universal; do
-		[ "$candidate_arch" = "universal" ] && [ "$apkmd_arch" = "universal" ] && [ "$candidate_arch" != "$apkmd_arch" ] && continue
 		for type in apk bundle; do
 			previous_density=""
 			for density in "$apkmd_dpi" nodpi; do
