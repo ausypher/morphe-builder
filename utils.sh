@@ -459,7 +459,7 @@ dl_apkmirror() {
 			fi
 			rm -f "$apkmd_dir"/download*
 			pr "APKMirror Downloader: $org/$repo_name version=$version arch=$apkmd_arch dpi=$density type=$type"
-			if node "$CWD/scripts/apkmirror-download.mjs" "$apkmd_dir" "$org" "$repo_name" "$version" "$apkmd_arch" "$density" "$type"; then
+			if bun "$CWD/scripts/apkmirror-download.mjs" "$apkmd_dir" "$org" "$repo_name" "$version" "$apkmd_arch" "$density" "$type"; then
 				:
 			fi
 			downloaded=$(find "$apkmd_dir" -maxdepth 1 -type f -name 'download*' -size +0c -print -quit)
