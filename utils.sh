@@ -260,27 +260,81 @@ req() { _req "$1" "$2" -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:108.0)
 # requests through FlareSolverr; keep other sources on normal curl.
 APKMIRROR_SESSION="morphe-patch-builder"
 apkmirror_req() {
-	local url="$1" op="$2" payload response dlp="$2"
-	local cookie_file="$TEMP_DIR/apkmirror-cookies.txt" referer_file="$TEMP_DIR/apkmirror-referer.txt" ua_file="$TEMP_DIR/apkmirror-user-agent.txt" referer="" user_agent=""
+	local url="$1" op="$2" payload response
+	local cookie_file="$TEMP_DIR/apkmirror-cookies.json"
+	local referer_file="$TEMP_DIR/apkmirror-referer.txt"
+	local ua_file="$TEMP_DIR/apkmirror-user-agent.txt"
+	local referer="" user_agent=""
+
 	if [ -z "${FLARESOLVERR_URL-}" ]; then
 		req "$url" "$op"
 		return $?
 	fi
+
 	if [ "$op" != "-" ]; then
 		[ -f "$referer_file" ] && referer=$(cat "$referer_file")
 		[ -f "$ua_file" ] && user_agent=$(cat "$ua_file")
 		[ -n "$user_agent" ] || user_agent="Mozilla/5.0 (X11; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0"
 		mkdir -p "$(dirname "$op")"
-		if ! curl -fLsS -L --connect-timeout 10 --retry 1 \
-			-b "$cookie_file" -e "${referer:-https://www.apkmirror.com/}" \
-			-H "User-Agent: $user_agent" \
-			"$url" -o "$op"; then
+		# Use the same HTTP client style as Morphe-Builder: preserve the cookies
+		# returned by FlareSolverr and send them with the download-page Referer.
+		if ! /usr/bin/python3 - "$url" "$op" "${referer:-https://www.apkmirror.com/}" "$user_agent" "$cookie_file" <<'PY'
+import json
+import os
+import sys
+import requests
+
+url, output, referer, user_agent, cookie_path = sys.argv[1:]
+with open(cookie_path, encoding="utf-8") as handle:
+    cookie_data = json.load(handle)
+
+session = requests.Session()
+for cookie in cookie_data:
+    name = cookie.get("name")
+    value = cookie.get("value")
+    if not name or value is None:
+        continue
+    session.cookies.set(
+        name,
+        value,
+        domain=cookie.get("domain") or ".apkmirror.com",
+        path=cookie.get("path") or "/",
+        secure=bool(cookie.get("secure", False)),
+    )
+
+temporary_output = output + ".download-tmp"
+try:
+    with session.get(
+        url,
+        headers={"Referer": referer, "User-Agent": user_agent},
+        stream=True,
+        timeout=(15, 120),
+        allow_redirects=True,
+    ) as response:
+        response.raise_for_status()
+        with open(temporary_output, "wb") as handle:
+            for chunk in response.iter_content(chunk_size=1024 * 256):
+                if chunk:
+                    handle.write(chunk)
+    if not os.path.isfile(temporary_output) or os.path.getsize(temporary_output) == 0:
+        raise RuntimeError("server returned an empty download")
+    os.replace(temporary_output, output)
+except Exception as exc:
+    try:
+        os.remove(temporary_output)
+    except FileNotFoundError:
+        pass
+    print(f"APKMirror file download failed: {url}: {exc}", file=sys.stderr)
+    sys.exit(1)
+PY
+		then
 			rm -f "$op"
 			epr "APKMirror file download failed: $url"
 			return 1
 		fi
 		return 0
 	fi
+
 	payload=$(jq -cn --arg url "$url" --arg session "$APKMIRROR_SESSION" '{cmd:"request.get",url:$url,session:$session,maxTimeout:60000}')
 	response=$(curl -sS --connect-timeout 10 --max-time 120 -H "Content-Type: application/json" -d "$payload" "${FLARESOLVERR_URL%/}/v1") || {
 		epr "FlareSolverr request failed: $url"
@@ -290,14 +344,11 @@ apkmirror_req() {
 		epr "FlareSolverr could not fetch APKMirror page: $url"
 		return 1
 	fi
-	# Remember the page URL and the browser identity used by FlareSolverr for the next download.
+
+	# Store the exact browser cookies and identity returned for this page.
 	printf '%s' "$url" > "$referer_file"
 	jq -r '.solution.userAgent // empty' <<<"$response" > "$ua_file"
-	printf '# Netscape HTTP Cookie File\n' > "$cookie_file"
-	jq -r '.solution.cookies[]? | [(.domain // ".apkmirror.com"), "TRUE", (.path // "/"), (if .secure then "TRUE" else "FALSE" end), ((.expires // 0) | tostring), .name, .value] | @tsv' <<<"$response" |
-		while IFS=$'\t' read -r domain include_subdomains path secure expiry name value; do
-			printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$domain" "$include_subdomains" "$path" "$secure" "$expiry" "$name" "$value" >> "$cookie_file"
-		done
+	jq -c '.solution.cookies // []' <<<"$response" > "$cookie_file"
 	jq -r '.solution.response' <<<"$response"
 }
 gh_req() { _req "$1" "$2" -H "$GH_HEADER"; }
