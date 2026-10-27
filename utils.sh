@@ -418,9 +418,8 @@ apkmirror_search() {
 }
 dl_apkmirror() {
 	local url=$1 version=${2// /-} output=$3 arch=$4 dpi=$5
-	local parent org repo_name apkmd_arch apkmd_dpi result type
+	local parent org repo_name apkmd_arch apkmd_dpi result type candidate_arch density downloaded previous_density
 	local apkmd_dir="${TEMP_DIR}/apkmd"
-	local downloaded
 
 	parent=${url%/}
 	repo_name=${parent##*/}
@@ -440,7 +439,7 @@ dl_apkmirror() {
 	fi
 
 	if [ -z "$dpi" ] || [ "$dpi" = "any" ]; then
-		apkmd_dpi="any"
+		apkmd_dpi="nodpi"
 	elif [[ "$dpi" =~ ^[0-9]+$ ]]; then
 		apkmd_dpi="${dpi}dpi"
 	else
@@ -452,31 +451,34 @@ dl_apkmirror() {
 		return 1
 	fi
 
-	for type in apk bundle; do
-		for density in "$apkmd_dpi" any; do
-			if [ "$density" = "any" ] && [ "$apkmd_dpi" = "any" ] && [ "$type" = "bundle" ]; then
-				break
-			fi
-			rm -f "$apkmd_dir"/download*
-			pr "APKMirror Downloader: $org/$repo_name version=$version arch=$apkmd_arch dpi=$density type=$type"
-			if bun "$CWD/scripts/apkmirror-download.mjs" "$apkmd_dir" "$org" "$repo_name" "$version" "$apkmd_arch" "$density" "$type"; then
-				:
-			fi
-			downloaded=$(find "$apkmd_dir" -maxdepth 1 -type f -name 'download*' -size +0c -print -quit)
-			if [ -n "$downloaded" ]; then
-				if [[ "$downloaded" == *.apkm ]] || [ "$type" = "bundle" ]; then
-					mv -f "$downloaded" "${output}.apkm"
-					merge_splits "${output}.apkm" "$output"
-					return $?
+	# Prefer the requested architecture, then try the universal APK.
+	# YouTube's nodpi APKMirror variant is universal, not arm64-only/armv7-only.
+	for candidate_arch in "$apkmd_arch" universal; do
+		[ "$candidate_arch" = "universal" ] && [ "$apkmd_arch" = "universal" ] && [ "$candidate_arch" != "$apkmd_arch" ] && continue
+		for type in apk bundle; do
+			previous_density=""
+			for density in "$apkmd_dpi" nodpi; do
+				[ "$density" = "$previous_density" ] && continue
+				previous_density="$density"
+				rm -f "$apkmd_dir"/download*
+				pr "APKMirror Downloader: $org/$repo_name version=$version arch=$candidate_arch dpi=$density type=$type"
+				bun "$CWD/scripts/apkmirror-download.mjs" "$apkmd_dir" "$org" "$repo_name" "$version" "$candidate_arch" "$density" "$type" || :
+				downloaded=$(find "$apkmd_dir" -maxdepth 1 -type f -name 'download*' -size +0c -print -quit)
+				if [ -n "$downloaded" ]; then
+					if [[ "$downloaded" == *.apkm ]] || [ "$type" = "bundle" ]; then
+						mv -f "$downloaded" "${output}.apkm"
+						merge_splits "${output}.apkm" "$output"
+						return $?
+					fi
+					mv -f "$downloaded" "$output"
+					return 0
 				fi
-				mv -f "$downloaded" "$output"
-				return 0
-			fi
-			if [ "$apkmd_dpi" = "any" ]; then break; fi
+			done
 		done
+		[ "$candidate_arch" = "universal" ] && break
 	done
 
-	epr "APKMirror Downloader could not obtain $org/$repo_name version=$version arch=$apkmd_arch dpi=$apkmd_dpi"
+	epr "APKMirror Downloader could not obtain $org/$repo_name version=$version arch=$apkmd_arch dpi=$apkmd_dpi (including universal fallback)"
 	return 1
 }
 get_apkmirror_vers() {
