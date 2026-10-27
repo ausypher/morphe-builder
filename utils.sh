@@ -255,98 +255,6 @@ _req() {
 	fi
 }
 req() { _req "$1" "$2" -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0"; }
-
-# APKMirror is protected by anti-bot checks on some runners. Route its page
-# requests through FlareSolverr; keep other sources on normal curl.
-APKMIRROR_SESSION="morphe-patch-builder"
-apkmirror_req() {
-	local url="$1" op="$2" payload response
-	local cookie_file="$TEMP_DIR/apkmirror-cookies.json"
-	local referer_file="$TEMP_DIR/apkmirror-referer.txt"
-	local ua_file="$TEMP_DIR/apkmirror-user-agent.txt"
-	local referer="" user_agent=""
-
-	if [ -z "${FLARESOLVERR_URL-}" ]; then
-		req "$url" "$op"
-		return $?
-	fi
-
-	if [ "$op" != "-" ]; then
-		[ -f "$referer_file" ] && referer=$(cat "$referer_file")
-		[ -f "$ua_file" ] && user_agent=$(cat "$ua_file")
-		[ -n "$user_agent" ] || user_agent="Mozilla/5.0 (X11; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0"
-		mkdir -p "$(dirname "$op")"
-		# Use the same HTTP client style as Morphe-Builder: preserve the cookies
-		# returned by FlareSolverr and send them with the download-page Referer.
-		if ! /usr/bin/python3 - "$url" "$op" "${referer:-https://www.apkmirror.com/}" "$user_agent" "$cookie_file" <<'PY'
-import json
-import os
-import sys
-import requests
-
-url, output, referer, user_agent, cookie_path = sys.argv[1:]
-with open(cookie_path, encoding="utf-8") as handle:
-    cookie_data = json.load(handle)
-
-session = requests.Session()
-# Match upstream Morphe-Builder behavior: pass the cookies returned by
-# the FlareSolverr download-page response directly to requests.get().
-cookies = {
-    cookie["name"]: cookie["value"]
-    for cookie in cookie_data
-    if cookie.get("name") and cookie.get("value") is not None
-}
-
-temporary_output = output + ".download-tmp"
-try:
-    with session.get(
-        url,
-        headers={"Referer": referer, "User-Agent": user_agent},
-        cookies=cookies,
-        stream=True,
-        timeout=(15, 120),
-        allow_redirects=True,
-    ) as response:
-        response.raise_for_status()
-        with open(temporary_output, "wb") as handle:
-            for chunk in response.iter_content(chunk_size=1024 * 256):
-                if chunk:
-                    handle.write(chunk)
-    if not os.path.isfile(temporary_output) or os.path.getsize(temporary_output) == 0:
-        raise RuntimeError("server returned an empty download")
-    os.replace(temporary_output, output)
-except Exception as exc:
-    try:
-        os.remove(temporary_output)
-    except FileNotFoundError:
-        pass
-    print(f"APKMirror file download failed: {url}: {exc}", file=sys.stderr)
-    sys.exit(1)
-PY
-		then
-			rm -f "$op"
-			epr "APKMirror file download failed: $url"
-			return 1
-		fi
-		return 0
-	fi
-
-	payload=$(jq -cn --arg url "$url" --arg session "$APKMIRROR_SESSION" '{cmd:"request.get",url:$url,session:$session,maxTimeout:60000}')
-	response=$(curl -sS --connect-timeout 10 --max-time 120 -H "Content-Type: application/json" -d "$payload" "${FLARESOLVERR_URL%/}/v1") || {
-		epr "FlareSolverr request failed: $url"
-		return 1
-	}
-	if [ "$(jq -r '.status // empty' <<<"$response")" != "ok" ] || [ "$(jq -r '.solution.status // 0' <<<"$response")" != "200" ]; then
-		epr "FlareSolverr could not fetch APKMirror page: $url"
-		return 1
-	fi
-
-	# Store the exact browser cookies and identity returned for this page.
-	printf '%s' "$url" > "$referer_file"
-	jq -r '.solution.userAgent // empty' <<<"$response" > "$ua_file"
-	jq -c '.solution.cookies // []' <<<"$response" > "$cookie_file"
-	jq -r '.solution.response' <<<"$response"
-}
 gh_req() { _req "$1" "$2" -H "$GH_HEADER"; }
 gh_dl() {
 	if [ ! -f "$1" ]; then
@@ -521,7 +429,7 @@ dl_apkmirror() {
 	apkmname=$($HTMLQ "h1.marginZero" --text <<<"$__APKMIRROR_RESP__")
 	apkmname="${apkmname,,}" apkmname="${apkmname// /-}" apkmname="${apkmname//[^a-z0-9-]/}"
 	url="${url}/${apkmname}-${version//./-}-release/"
-	resp=$(apkmirror_req "$url" -) || return 1
+	resp=$(req "$url" -) || return 1
 	node=$($HTMLQ "div.table-row.headerFont:nth-last-child(1)" -r "span:nth-child(n+3)" <<<"$resp")
 	if [ "$node" ]; then
 		for type in APK BUNDLE; do
@@ -533,21 +441,21 @@ dl_apkmirror() {
 			fi
 		done
 		if [ -z "$dlurl" ]; then return 1; fi
-		resp=$(apkmirror_req "$dlurl" -)
+		resp=$(req "$dlurl" -)
 	fi
 	url=$(echo "$resp" | $HTMLQ --base https://www.apkmirror.com --attribute href "a.btn") || return 1
-	url=$(apkmirror_req "$url" - | $HTMLQ --base https://www.apkmirror.com --attribute href "span > a[rel = nofollow]") || return 1
+	url=$(req "$url" - | $HTMLQ --base https://www.apkmirror.com --attribute href "span > a[rel = nofollow]") || return 1
 
 	if [ "$is_bundle" = true ]; then
-		apkmirror_req "$url" "${output}.apkm" || return 1
+		req "$url" "${output}.apkm" || return 1
 		merge_splits "${output}.apkm" "${output}"
 	else
-		apkmirror_req "$url" "${output}" || return 1
+		req "$url" "${output}" || return 1
 	fi
 }
 get_apkmirror_vers() {
 	local vers apkm_resp
-	apkm_resp=$(apkmirror_req "https://www.apkmirror.com/uploads/?appcategory=${__APKMIRROR_CAT__}" -)
+	apkm_resp=$(req "https://www.apkmirror.com/uploads/?appcategory=${__APKMIRROR_CAT__}" -)
 	vers=$(sed -n 's;.*Version:</span><span class="infoSlide-value">\(.*\) </span>.*;\1;p' <<<"$apkm_resp" | awk '{$1=$1}1')
 
 	vers=$(grep -iv "\(beta\|alpha\)" <<<"$vers")
@@ -560,7 +468,7 @@ get_apkmirror_vers() {
 }
 get_apkmirror_pkg_name() { sed -n 's;.*id=\(.*\)" class="accent_color.*;\1;p' <<<"$__APKMIRROR_RESP__"; }
 get_apkmirror_resp() {
-	__APKMIRROR_RESP__=$(apkmirror_req "${1}" -) || return 1
+	__APKMIRROR_RESP__=$(req "${1}" -) || return 1
 	__APKMIRROR_CAT__="${1##*/}"
 }
 
