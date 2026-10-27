@@ -532,8 +532,9 @@ dl_apkmirror() {
 	# Some releases may be distributed only as APK bundles.
 	"$apkmd" download google-inc youtube --version "$version" --arch "$cli_arch" --dpi "$cli_dpi" --type bundle --outfile downloaded.apkm --outdir "$workdir" || :
 	if [ -s "$bundle" ] && unzip -t "$bundle" >/dev/null 2>&1; then
-		merge_splits "$bundle" "$output"
-		return $?
+		cp -f "$bundle" "${output}.apkm" || return 1
+		merge_splits "$bundle" "$output" || return $?
+		return 0
 	fi
 
 	rm -f "$downloaded" "$bundle" "$output"
