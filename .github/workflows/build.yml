@@ -99,6 +99,11 @@ jobs:
           echo "Previous versionCode: $MAX_CODE"
           echo "Next versionCode: $NEXT_VER_CODE"
 
+      - name: Install Python requests for APKMirror downloads
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y python3-requests
+
       - name: Wait for FlareSolverr
         run: |
           for i in {1..30}; do
