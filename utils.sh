@@ -509,41 +509,36 @@ apkmirror_search() {
 	return 1
 }
 dl_apkmirror() {
-	local url=$1 version=${2// /-} output=$3 arch=$4 dpi=$5 is_bundle=false
+	local url=$1 version=${2// /-} output=$3 arch=$4 dpi=$5
+	local workdir="${TEMP_DIR}/apkmirror-downloader-${arch//[^a-zA-Z0-9_-]/_}"
+	local downloaded="${workdir}/downloaded.apk" bundle="${workdir}/downloaded.apkm"
+	local apkmd="${BIN_DIR}/apkmd"
+	local cli_arch="$arch" cli_dpi="$dpi"
 
-	if [ -f "${output}.apkm" ]; then
-		merge_splits "${output}.apkm" "${output}"
+	[ "$cli_arch" = "arm-v7a" ] && cli_arch="armeabi-v7a"
+	[ "$cli_dpi" != "nodpi" ] && [ "$cli_dpi" != "anydpi" ] && [ "$cli_dpi" != "*" ] && [ "$cli_dpi" != "any" ] && cli_dpi="${cli_dpi}dpi"
+	mkdir -p "$workdir" || return 1
+	rm -f "$downloaded" "$bundle"
+
+	# Use the upstream downloader for variant selection and download-page handling.
+	# Validate output because the upstream CLI may not propagate every error code.
+	"$apkmd" download google-inc youtube --version "$version" --arch "$cli_arch" --dpi "$cli_dpi" --type apk --outfile downloaded.apk --outdir "$workdir" || :
+	if [ -s "$downloaded" ] && unzip -t "$downloaded" >/dev/null 2>&1; then
+		mv -f "$downloaded" "$output" || return 1
 		return 0
 	fi
+	rm -f "$downloaded"
 
-	if [ "$arch" = "arm-v7a" ]; then arch="armeabi-v7a"; fi
-	local resp node app_table apkmname dlurl=""
-	apkmname=$($HTMLQ "h1.marginZero" --text <<<"$__APKMIRROR_RESP__")
-	apkmname="${apkmname,,}" apkmname="${apkmname// /-}" apkmname="${apkmname//[^a-z0-9-]/}"
-	url="${url}/${apkmname}-${version//./-}-release/"
-	resp=$(apkmirror_req "$url" -) || return 1
-	node=$($HTMLQ "div.table-row.headerFont:nth-last-child(1)" -r "span:nth-child(n+3)" <<<"$resp")
-	if [ "$node" ]; then
-		for type in APK BUNDLE; do
-			if dlurl=$(apkmirror_search "$resp" "$dpi" "$arch" "$type"); then
-				if [ "$type" = "BUNDLE" ]; then
-					is_bundle=true
-				else is_bundle=false; fi
-				break 2
-			fi
-		done
-		if [ -z "$dlurl" ]; then return 1; fi
-		resp=$(apkmirror_req "$dlurl" -)
+	# Some releases may be distributed only as APK bundles.
+	"$apkmd" download google-inc youtube --version "$version" --arch "$cli_arch" --dpi "$cli_dpi" --type bundle --outfile downloaded.apkm --outdir "$workdir" || :
+	if [ -s "$bundle" ] && unzip -t "$bundle" >/dev/null 2>&1; then
+		merge_splits "$bundle" "$output"
+		return $?
 	fi
-	url=$(echo "$resp" | $HTMLQ --base https://www.apkmirror.com --attribute href "a.btn") || return 1
-	url=$(apkmirror_req "$url" - | $HTMLQ --base https://www.apkmirror.com --attribute href "span > a[rel = nofollow]") || return 1
 
-	if [ "$is_bundle" = true ]; then
-		apkmirror_req "$url" "${output}.apkm" || return 1
-		merge_splits "${output}.apkm" "${output}"
-	else
-		apkmirror_req "$url" "${output}" || return 1
-	fi
+	rm -f "$downloaded" "$bundle" "$output"
+	epr "APKMirror Downloader could not obtain a valid APK for version '$version', arch '$arch', dpi '$dpi'"
+	return 1
 }
 get_apkmirror_vers() {
 	local vers apkm_resp
