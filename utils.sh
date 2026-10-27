@@ -261,15 +261,16 @@ req() { _req "$1" "$2" -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:108.0)
 APKMIRROR_SESSION="morphe-patch-builder"
 apkmirror_req() {
 	local url="$1" op="$2" payload response dlp="$2"
-	local cookie_file="$TEMP_DIR/apkmirror-cookies.txt"
+	local cookie_file="$TEMP_DIR/apkmirror-cookies.txt" referer_file="$TEMP_DIR/apkmirror-referer.txt" referer=""
 	if [ -z "${FLARESOLVERR_URL-}" ]; then
 		req "$url" "$op"
 		return $?
 	fi
 	if [ "$op" != "-" ]; then
+		[ -f "$referer_file" ] && referer=$(cat "$referer_file")
 		mkdir -p "$(dirname "$op")"
 		if ! curl -fLsS -L --connect-timeout 10 --retry 1 \
-			-b "$cookie_file" -e "https://www.apkmirror.com/" \
+			-b "$cookie_file" -e "${referer:-https://www.apkmirror.com/}" \
 			-H "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0" \
 			"$url" -o "$op"; then
 			rm -f "$op"
@@ -287,7 +288,8 @@ apkmirror_req() {
 		epr "FlareSolverr could not fetch APKMirror page: $url"
 		return 1
 	fi
-	# Refresh the cookie jar after every successful page request.
+	# Remember the page URL for the next step and refresh the session cookies.
+	printf '%s' "$url" > "$referer_file"
 	printf '# Netscape HTTP Cookie File\n' > "$cookie_file"
 	jq -r '.solution.cookies[]? | [(.domain // ".apkmirror.com"), "TRUE", (.path // "/"), (if .secure then "TRUE" else "FALSE" end), ((.expires // 0) | tostring), .name, .value] | @tsv' <<<"$response" |
 		while IFS=$'\t' read -r domain include_subdomains path secure expiry name value; do
