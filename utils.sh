@@ -535,6 +535,40 @@ dl_uptodown() {
 }
 get_uptodown_pkg_name() { $HTMLQ --text "tr.full:nth-child(1) > td:nth-child(3)" <<<"$__UPTODOWN_RESP_PKG__"; }
 
+# -------------------- apkmirror --------------------
+dl_apkmirror() {
+	local url=$1 version=$2 output=$3 arch=$4 dpi=$5
+	local result
+
+	if [ -f "${output}.apkm" ]; then
+		merge_splits "${output}.apkm" "${output}"
+		return $?
+	fi
+
+	pr "Using imported APKMirror scraper (Python + curl_cffi)"
+	if ! result=$(python3 apkmirror_bridge.py download "$url" "$version" "$output" "$arch" "$dpi"); then
+		epr "APKMirror scraper failed for version '$version', arch '$arch'"
+		return 1
+	fi
+
+	if [ -f "${output}.apkm" ]; then
+		merge_splits "${output}.apkm" "${output}" || return 1
+	elif [ ! -f "$output" ]; then
+		epr "APKMirror scraper returned without an APK: $result"
+		return 1
+	fi
+	return 0
+}
+get_apkmirror_vers() {
+	jq -r '.versions[]?' <<<"$__APKMIRROR_JSON__"
+}
+get_apkmirror_pkg_name() {
+	jq -r '.pkg_name // empty' <<<"$__APKMIRROR_JSON__"
+}
+get_apkmirror_resp() {
+	__APKMIRROR_JSON__=$(python3 apkmirror_bridge.py metadata "$1") || return 1
+	__APKMIRROR_CAT__=$(jq -r '.category // empty' <<<"$__APKMIRROR_JSON__")
+}
 # -------------------- archive --------------------
 dl_archive() {
 	local url=$1 version=$2 output=$3 arch=$4
