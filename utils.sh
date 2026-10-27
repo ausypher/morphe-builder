@@ -416,9 +416,11 @@ dl_apkpure() {
 	downloaded=$(find "$download_dir" -maxdepth 1 -type f \( -name '*.apk' -o -name '*.xapk' \) -print -quit)
 	if [ -z "$downloaded" ]; then
 		epr "apkeep did not produce an APK/XAPK (exit=$status). Full apkeep output:"
+		# apkeep progress output may use carriage returns; split those too so
+		# diagnostic lines are not hidden in a single terminal-style line.
 		while IFS= read -r line; do
 			[ -n "$line" ] && epr "apkeep: $line"
-		done <<<"$resp"
+		done < <(printf '%s' "$resp" | tr '\r' '\n')
 		rm -f "${download_dir}/apkeep.log"
 		return 1
 	fi
