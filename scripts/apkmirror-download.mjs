@@ -1,5 +1,5 @@
 import { readdir } from "node:fs/promises";
-import { resolve, join } from "node:path";
+import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const [installDir, org, repo, version, arch, dpi, type] = process.argv.slice(2);
