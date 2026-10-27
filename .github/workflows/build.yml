@@ -90,15 +90,6 @@ jobs:
           echo "Previous versionCode: $MAX_CODE"
           echo "Next versionCode: $NEXT_VER_CODE"
 
-      - name: Set up Bun for APKMirror Downloader
-        uses: oven-sh/setup-bun@v2
-
-      - name: Install APKMirror Downloader
-        run: |
-          mkdir -p temp/apkmd
-          cd temp/apkmd
-          bun add apkmirror-downloader@2.0.11
-
       - name: Build modules/APKs
         run: if [ -f "config.json" ]; then ./build.sh config.json; else ./build.sh config.toml; fi
         env:
