@@ -117,6 +117,17 @@ jobs:
             -d '{"cmd":"sessions.create","session":"morphe-patch-builder"}' \
             http://localhost:8191/v1 | jq -e '.status == "ok"' >/dev/null
 
+      - name: Install APKMirror Downloader
+        run: |
+          set -euo pipefail
+          mkdir -p bin
+          curl -fL --retry 3 --connect-timeout 15 \
+            https://github.com/tanishqmanuja/apkmirror-downloader/releases/download/v2.0.11/apkmd \
+            -o bin/apkmd
+          echo "408c31e0ff8dc3f15a3cb1e8c199de465f4db272ef5a7d30cf82e36a865f13b9  bin/apkmd" | sha256sum --check
+          chmod +x bin/apkmd
+          bin/apkmd --help
+
       - name: Build modules/APKs
         run: if [ -f "config.json" ]; then ./build.sh config.json; else ./build.sh config.toml; fi
         env:
