@@ -383,20 +383,20 @@ merge_splits() {
 # -------------------- APKPure via apkeep --------------------
 get_apkpure_resp() {
 	__APKPURE_PKG_NAME="${1%/}"
-	[ -n "$__APKPURE_PKG_NAME" ]
-}
-get_apkpure_pkg_name() { echo "$__APKPURE_PKG_NAME"; }
-get_apkpure_vers() {
+	[ -n "$__APKPURE_PKG_NAME" ] || return 1
 	if ! command -v apkeep >/dev/null 2>&1; then
 		epr "apkeep is not installed"
 		return 1
 	fi
-	local resp
-	resp=$(apkeep -l -a "$__APKPURE_PKG_NAME" -d apk-pure -o 'output_format=json' 2>&1) || {
-		epr "apkeep could not list APKPure versions: $resp"
+	__APKPURE_RESP__=$(apkeep -l -a "$__APKPURE_PKG_NAME" -d apk-pure -o 'output_format=json' 2>&1) || {
+		epr "apkeep could not list APKPure versions: $__APKPURE_RESP__"
 		return 1
 	}
-	jq -r '.apps[]?.available_versions[]?.version // empty' <<<"$resp"
+	jq -e '.apps | has("'"$__APKPURE_PKG_NAME"'")' <<<"$__APKPURE_RESP__" >/dev/null 2>&1
+}
+get_apkpure_pkg_name() { echo "$__APKPURE_PKG_NAME"; }
+get_apkpure_vers() {
+	jq -r '.apps[]?.available_versions[]?.version // empty' <<<"$__APKPURE_RESP__"
 }
 dl_apkpure() {
 	local pkg="${1%/}" version="${2// /}" output=$3 arch=$4 _dpi=${5-}
