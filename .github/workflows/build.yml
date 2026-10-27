@@ -25,17 +25,6 @@ jobs:
           fetch-depth: 0
           submodules: true
           
-      - name: Install apkeep (APKPure downloader)
-        run: |
-          set -euo pipefail
-          APKEEP_VERSION="1.1.0"
-          APKEEP_URL="https://github.com/EFForg/apkeep/releases/download/${APKEEP_VERSION}/apkeep-x86_64-unknown-linux-gnu"
-          APKEEP_SHA256="badd7ad9fa7d2f32abe01eaf33b7ff086361a95bbc000a33bf44b630d4bf2140"
-          curl --fail --location --retry 3 --retry-delay 2 "$APKEEP_URL" -o /tmp/apkeep
-          echo "$APKEEP_SHA256  /tmp/apkeep" | sha256sum --check
-          sudo install -m 0755 /tmp/apkeep /usr/local/bin/apkeep
-          apkeep --version
-
       - name: Restore signing keystore
         env:
           MORPHE_KEYSTORE_BASE64: ${{ secrets.MORPHE_KEYSTORE_BASE64 }}
