@@ -1,10 +1,33 @@
-# Morphe Module and APK
-[![Telegram](https://img.shields.io/badge/Telegram-2CA5E0?style=for-the-badge&logo=telegram&logoColor=white)](https://t.me/rvc_magisk)
-[![CI](https://github.com/elohim-etz/morphe-builder/actions/workflows/ci.yml/badge.svg?event=schedule)](https://github.com/elohim-etz/morphe-builder/actions/workflows/ci.yml)
+<div align="center">
 
-Extensive Morphe Builder
+# Morphe Patch Builder
 
-Get the [latest CI release](https://github.com/elohim-etz/morphe-builder/releases).
+**A community-maintained Morphe APK and module builder**
+
+[![CI](https://github.com/ausypher/morphe-patch-builder/actions/workflows/ci.yml/badge.svg)](https://github.com/ausypher/morphe-patch-builder/actions/workflows/ci.yml)
+[![Releases](https://img.shields.io/github/v/release/ausypher/morphe-patch-builder?display_name=tag&label=latest%20release)](https://github.com/ausypher/morphe-patch-builder/releases)
+
+Build patched APKs and modules with GitHub Actions, using configurable Morphe patches and multiple APK download sources.
+
+[**Latest releases**](https://github.com/ausypher/morphe-patch-builder/releases) · [**Build workflow**](https://github.com/ausypher/morphe-patch-builder/actions/workflows/build.yml)
+
+</div>
+
+---
+
+## About this fork
+
+This repository is based on the [**builder-for-morphe**](https://github.com/nvbangg/builder-for-morphe) project.
+
+The APK download flow includes components adapted from [**nvbangg/builder-for-morphe**](https://github.com/nvbangg/builder-for-morphe) for retrieving APKs from **APKMirror**. The APKMirror integration was tested in [**my-youtube-morphe**](https://github.com/ausypher/my-youtube-morphe) before being ported to this multi-app builder.
+
+### APK download priority
+
+1. **Direct**
+2. **APKMirror** — uses the integrated APKMirror retrieval components from nvbangg/builder-for-morphe
+3. **Archive.org** — fallback source
+
+This fork is maintained separately. Links above identify the upstream project and the source of the APKMirror-related components.
 
 Use [**zygisk-detach**](https://github.com/j-hc/zygisk-detach) to detach YouTube and YT Music from Play Store if you are using modules. 
 
