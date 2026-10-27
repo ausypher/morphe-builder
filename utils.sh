@@ -422,6 +422,7 @@ apkcombo_search() {
 }
 dl_apkcombo() {
 	local url=$1 version=${2// /-} output=$3 arch=$4 dpi=$5
+	[ "$arch" = "arm-v7a" ] && arch="armeabi-v7a"
 	local variants_url="${url}/download/phone-${version}-apk"
 	local resp variant_url checkin final_url
 
