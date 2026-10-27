@@ -90,24 +90,6 @@ jobs:
           echo "Previous versionCode: $MAX_CODE"
           echo "Next versionCode: $NEXT_VER_CODE"
 
-      - name: Install Python requests for APKMirror downloads
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y python3-requests
-
-      - name: Wait for FlareSolverr
-        run: |
-          for i in {1..30}; do
-            if curl -fsS http://localhost:8191/health >/dev/null; then
-              break
-            fi
-            sleep 2
-          done
-          curl -fsS http://localhost:8191/health >/dev/null
-          curl -fsS -H "Content-Type: application/json" \
-            -d '{"cmd":"sessions.create","session":"morphe-patch-builder"}' \
-            http://localhost:8191/v1 | jq -e '.status == "ok"' >/dev/null
-
       - name: Build modules/APKs
         run: if [ -f "config.json" ]; then ./build.sh config.json; else ./build.sh config.toml; fi
         env:
