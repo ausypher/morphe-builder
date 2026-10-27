@@ -417,41 +417,67 @@ apkmirror_search() {
 	return 1
 }
 dl_apkmirror() {
-	local url=$1 version=${2// /-} output=$3 arch=$4 dpi=$5 is_bundle=false
+	local url=$1 version=${2// /-} output=$3 arch=$4 dpi=$5
+	local parent org repo_name apkmd_arch apkmd_dpi result type
+	local apkmd_dir="${TEMP_DIR}/apkmd"
+	local downloaded
 
-	if [ -f "${output}.apkm" ]; then
-		merge_splits "${output}.apkm" "${output}"
-		return 0
+	parent=${url%/}
+	repo_name=${parent##*/}
+	parent=${parent%/*}
+	org=${parent##*/}
+	if [ -z "$org" ] || [ -z "$repo_name" ] || [ "$parent" = "$url" ]; then
+		epr "Invalid APKMirror URL: $url"
+		return 1
 	fi
 
-	if [ "$arch" = "arm-v7a" ]; then arch="armeabi-v7a"; fi
-	local resp node app_table apkmname dlurl=""
-	apkmname=$($HTMLQ "h1.marginZero" --text <<<"$__APKMIRROR_RESP__")
-	apkmname="${apkmname,,}" apkmname="${apkmname// /-}" apkmname="${apkmname//[^a-z0-9-]/}"
-	url="${url}/${apkmname}-${version//./-}-release/"
-	resp=$(req "$url" -) || return 1
-	node=$($HTMLQ "div.table-row.headerFont:nth-last-child(1)" -r "span:nth-child(n+3)" <<<"$resp")
-	if [ "$node" ]; then
-		for type in APK BUNDLE; do
-			if dlurl=$(apkmirror_search "$resp" "$dpi" "$arch" "$type"); then
-				if [ "$type" = "BUNDLE" ]; then
-					is_bundle=true
-				else is_bundle=false; fi
-				break 2
-			fi
-		done
-		if [ -z "$dlurl" ]; then return 1; fi
-		resp=$(req "$dlurl" -)
-	fi
-	url=$(echo "$resp" | $HTMLQ --base https://www.apkmirror.com --attribute href "a.btn") || return 1
-	url=$(req "$url" - | $HTMLQ --base https://www.apkmirror.com --attribute href "span > a[rel = nofollow]") || return 1
-
-	if [ "$is_bundle" = true ]; then
-		req "$url" "${output}.apkm" || return 1
-		merge_splits "${output}.apkm" "${output}"
+	if [ "$arch" = "arm-v7a" ]; then
+		apkmd_arch="armeabi-v7a"
+	elif [ "$arch" = "all" ]; then
+		apkmd_arch="universal"
 	else
-		req "$url" "${output}" || return 1
+		apkmd_arch="$arch"
 	fi
+
+	if [ -z "$dpi" ] || [ "$dpi" = "any" ]; then
+		apkmd_dpi="any"
+	elif [[ "$dpi" =~ ^[0-9]+$ ]]; then
+		apkmd_dpi="${dpi}dpi"
+	else
+		apkmd_dpi="$dpi"
+	fi
+
+	if [ ! -f "$apkmd_dir/node_modules/apkmirror-downloader/dist/index.js" ]; then
+		epr "APKMirror Downloader is not installed"
+		return 1
+	fi
+
+	for type in apk bundle; do
+		for density in "$apkmd_dpi" any; do
+			if [ "$density" = "any" ] && [ "$apkmd_dpi" = "any" ] && [ "$type" = "bundle" ]; then
+				break
+			fi
+			rm -f "$apkmd_dir"/download*
+			pr "APKMirror Downloader: $org/$repo_name version=$version arch=$apkmd_arch dpi=$density type=$type"
+			if (cd "$apkmd_dir" && bun run download.mjs "$org" "$repo_name" "$version" "$apkmd_arch" "$density" "$type"); then
+				:
+			fi
+			downloaded=$(find "$apkmd_dir" -maxdepth 1 -type f -name 'download*' -size +0c -print -quit)
+			if [ -n "$downloaded" ]; then
+				if [[ "$downloaded" == *.apkm ]] || [ "$type" = "bundle" ]; then
+					mv -f "$downloaded" "${output}.apkm"
+					merge_splits "${output}.apkm" "$output"
+					return $?
+				fi
+				mv -f "$downloaded" "$output"
+				return 0
+			fi
+			if [ "$apkmd_dpi" = "any" ]; then break; fi
+		done
+	done
+
+	epr "APKMirror Downloader could not obtain $org/$repo_name version=$version arch=$apkmd_arch dpi=$apkmd_dpi"
+	return 1
 }
 get_apkmirror_vers() {
 	local vers apkm_resp
