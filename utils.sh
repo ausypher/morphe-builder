@@ -5,7 +5,7 @@ CWD=$(pwd)
 TEMP_DIR="temp"
 BIN_DIR="bin"
 BUILD_DIR="build"
-DL_SRCS=("direct" "apkmirror" "archive")
+DL_SRCS=("direct" "apkcombo" "archive")
 
 if [ "${GITHUB_TOKEN-}" ]; then GH_HEADER="Authorization: token ${GITHUB_TOKEN}"; else GH_HEADER=; fi
 NEXT_VER_CODE=${NEXT_VER_CODE:-$(date +'%Y%m%d')}
@@ -256,97 +256,6 @@ _req() {
 }
 req() { _req "$1" "$2" -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0"; }
 
-# APKMirror is protected by anti-bot checks on some runners. Route its page
-# requests through FlareSolverr; keep other sources on normal curl.
-APKMIRROR_SESSION="morphe-patch-builder"
-apkmirror_req() {
-	local url="$1" op="$2" payload response
-	local cookie_file="$TEMP_DIR/apkmirror-cookies.json"
-	local referer_file="$TEMP_DIR/apkmirror-referer.txt"
-	local ua_file="$TEMP_DIR/apkmirror-user-agent.txt"
-	local referer="" user_agent=""
-
-	if [ -z "${FLARESOLVERR_URL-}" ]; then
-		req "$url" "$op"
-		return $?
-	fi
-
-	if [ "$op" != "-" ]; then
-		[ -f "$referer_file" ] && referer=$(cat "$referer_file")
-		[ -f "$ua_file" ] && user_agent=$(cat "$ua_file")
-		[ -n "$user_agent" ] || user_agent="Mozilla/5.0 (X11; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0"
-		mkdir -p "$(dirname "$op")"
-		# Use the same HTTP client style as Morphe-Builder: preserve the cookies
-		# returned by FlareSolverr and send them with the download-page Referer.
-		if ! /usr/bin/python3 - "$url" "$op" "${referer:-https://www.apkmirror.com/}" "$user_agent" "$cookie_file" <<'PY'
-import json
-import os
-import sys
-import requests
-
-url, output, referer, user_agent, cookie_path = sys.argv[1:]
-with open(cookie_path, encoding="utf-8") as handle:
-    cookie_data = json.load(handle)
-
-session = requests.Session()
-# Match upstream Morphe-Builder behavior: pass the cookies returned by
-# the FlareSolverr download-page response directly to requests.get().
-cookies = {
-    cookie["name"]: cookie["value"]
-    for cookie in cookie_data
-    if cookie.get("name") and cookie.get("value") is not None
-}
-
-temporary_output = output + ".download-tmp"
-try:
-    with session.get(
-        url,
-        headers={"Referer": referer, "User-Agent": user_agent},
-        cookies=cookies,
-        stream=True,
-        timeout=(15, 120),
-        allow_redirects=True,
-    ) as response:
-        response.raise_for_status()
-        with open(temporary_output, "wb") as handle:
-            for chunk in response.iter_content(chunk_size=1024 * 256):
-                if chunk:
-                    handle.write(chunk)
-    if not os.path.isfile(temporary_output) or os.path.getsize(temporary_output) == 0:
-        raise RuntimeError("server returned an empty download")
-    os.replace(temporary_output, output)
-except Exception as exc:
-    try:
-        os.remove(temporary_output)
-    except FileNotFoundError:
-        pass
-    print(f"APKMirror file download failed: {url}: {exc}", file=sys.stderr)
-    sys.exit(1)
-PY
-		then
-			rm -f "$op"
-			epr "APKMirror file download failed: $url"
-			return 1
-		fi
-		return 0
-	fi
-
-	payload=$(jq -cn --arg url "$url" --arg session "$APKMIRROR_SESSION" '{cmd:"request.get",url:$url,session:$session,maxTimeout:60000}')
-	response=$(curl -sS --connect-timeout 10 --max-time 120 -H "Content-Type: application/json" -d "$payload" "${FLARESOLVERR_URL%/}/v1") || {
-		epr "FlareSolverr request failed: $url"
-		return 1
-	}
-	if [ "$(jq -r '.status // empty' <<<"$response")" != "ok" ] || [ "$(jq -r '.solution.status // 0' <<<"$response")" != "200" ]; then
-		epr "FlareSolverr could not fetch APKMirror page: $url"
-		return 1
-	fi
-
-	# Store the exact browser cookies and identity returned for this page.
-	printf '%s' "$url" > "$referer_file"
-	jq -r '.solution.userAgent // empty' <<<"$response" > "$ua_file"
-	jq -c '.solution.cookies // []' <<<"$response" > "$cookie_file"
-	jq -r '.solution.response' <<<"$response"
-}
 gh_req() { _req "$1" "$2" -H "$GH_HEADER"; }
 gh_dl() {
 	if [ ! -f "$1" ]; then
@@ -472,96 +381,75 @@ merge_splits() {
 	return 0
 }
 
-# -------------------- apkmirror --------------------
-apkmirror_search() {
-	local resp="$1" dpi="$2" arch="$3" apk_bundle="$4"
-	local dlurl="" node app_table emptyCheck
+# -------------------- apkcombo --------------------
+# APKCombo source implementation. Keep this source in the existing APKMirror
+# position so fallback order remains: direct -> APKCombo -> archive.
+apkcombo_search() {
+	local resp="$1" dpi="$2" arch="$3"
+	local row row_arch row_dpi row_type href selected="" fallback=""
+	local n
 
-	local apparch=('universal' 'noarch' 'arm64-v8a + armeabi-v7a')
-	if [ "$arch" != "all" ]; then
-		apparch+=("$arch")
-	fi
+	for ((n = 1; n <= 30; n++)); do
+		row=$($HTMLQ "#best-variant-tab > :nth-child($n)" <<<"$resp")
+		[ -n "$row" ] || break
 
-	local appdpi=("nodpi" "anydpi")
-	if [ "$dpi" ]; then
-		appdpi+=($dpi)
-	fi
+		row_type=$($HTMLQ --text "span" <<<"$row" | tr '\n' ' ' | xargs)
+		[[ "${row_type^^}" == *APK* && "${row_type^^}" != *BUNDLE* ]] || continue
 
-	for ((n = 1; n < 40; n++)); do
-		node=$($HTMLQ "div.table-row.headerFont:nth-last-child($n)" -r "span:nth-child(n+3)" <<<"$resp")
-		if [ -z "$node" ]; then break; fi
-		emptyCheck=$($HTMLQ -t -w "div.table-cell:nth-child(1) > a:nth-child(1)" <<<"$node" | xargs)
-		if [ -z "$emptyCheck" ]; then break; fi
-		app_table=$($HTMLQ --text --ignore-whitespace <<<"$node")
-		if [ "$(sed -n 3p <<<"$app_table")" != "$apk_bundle" ]; then continue; fi
-		dlurl=$($HTMLQ --base https://www.apkmirror.com --attribute href "div:nth-child(1) > a:nth-child(1)" <<<"$node")
-		if isoneof "$(sed -n 6p <<<"$app_table")" "${appdpi[@]}" &&
-			isoneof "$(sed -n 4p <<<"$app_table")" "${apparch[@]}"; then
-			echo "$dlurl"
+		row_arch=$($HTMLQ --text ".blur" <<<"$row" | tr '\n' ' ' | xargs)
+		row_dpi=$($HTMLQ --text ".spec" <<<"$row" | sed -n '3p' | xargs)
+		href=$($HTMLQ --base https://apkcombo.app --attribute href "a" <<<"$row")
+		[ -n "$href" ] || continue
+
+		local arch_ok=false dpi_ok=false
+		if [ "$arch" = "all" ] || [ "$arch" = "universal" ] || [ "$arch" = "noarch" ]; then
+			[[ "$row_arch" == *universal* || "$row_arch" == *noarch* || "$row_arch" == *"$arch"* ]] && arch_ok=true
+		else
+			[[ ", $row_arch, " == *", $arch,"* ]] && arch_ok=true
+		fi
+		if [ "$row_dpi" = "$dpi" ] || [ "$row_dpi" = "nodpi" ] || [ "$row_dpi" = "anydpi" ] || [ "$row_dpi" = "any" ]; then dpi_ok=true; fi
+
+		if [ "$arch_ok" = true ] && [ "$dpi_ok" = true ]; then
+			echo "$href"
 			return 0
 		fi
+		if [ "$arch_ok" = true ] && [ -z "$fallback" ]; then fallback="$href"; fi
+		if [ -z "$fallback" ] && { [[ "$row_arch" == *universal* ]] || [[ "$row_arch" == *noarch* ]]; }; then fallback="$href"; fi
 	done
-	if [ "$n" -eq 2 ] && [ "$dlurl" ]; then
-		# only one apk exists, return it
-		echo "$dlurl"
-		return 0
-	fi
-	return 1
+
+	[ -n "$fallback" ] || return 1
+	echo "$fallback"
 }
-dl_apkmirror() {
-	local url=$1 version=${2// /-} output=$3 arch=$4 dpi=$5 is_bundle=false
+dl_apkcombo() {
+	local url=$1 version=${2// /-} output=$3 arch=$4 dpi=$5
+	local variants_url="${url}/download/phone-${version}-apk"
+	local resp variant_url checkin final_url
 
-	if [ -f "${output}.apkm" ]; then
-		merge_splits "${output}.apkm" "${output}"
-		return 0
-	fi
+	resp=$(req "$variants_url" -) || return 1
+	variant_url=$(apkcombo_search "$resp" "$dpi" "$arch") || {
+		epr "APKCombo has no matching APK variant for version '$version', arch '$arch', dpi '$dpi'"
+		return 1
+	}
+	checkin=$(req "https://apkcombo.app/checkin" -) || return 1
+	[ -n "$checkin" ] || { epr "APKCombo returned an empty check-in token"; return 1; }
+	final_url="${variant_url}&${checkin}"
 
-	if [ "$arch" = "arm-v7a" ]; then arch="armeabi-v7a"; fi
-	local resp node app_table apkmname dlurl=""
-	apkmname=$($HTMLQ "h1.marginZero" --text <<<"$__APKMIRROR_RESP__")
-	apkmname="${apkmname,,}" apkmname="${apkmname// /-}" apkmname="${apkmname//[^a-z0-9-]/}"
-	url="${url}/${apkmname}-${version//./-}-release/"
-	resp=$(apkmirror_req "$url" -) || return 1
-	node=$($HTMLQ "div.table-row.headerFont:nth-last-child(1)" -r "span:nth-child(n+3)" <<<"$resp")
-	if [ "$node" ]; then
-		for type in APK BUNDLE; do
-			if dlurl=$(apkmirror_search "$resp" "$dpi" "$arch" "$type"); then
-				if [ "$type" = "BUNDLE" ]; then
-					is_bundle=true
-				else is_bundle=false; fi
-				break 2
-			fi
-		done
-		if [ -z "$dlurl" ]; then return 1; fi
-		resp=$(apkmirror_req "$dlurl" -)
-	fi
-	url=$(echo "$resp" | $HTMLQ --base https://www.apkmirror.com --attribute href "a.btn") || return 1
-	url=$(apkmirror_req "$url" - | $HTMLQ --base https://www.apkmirror.com --attribute href "span > a[rel = nofollow]") || return 1
-
-	if [ "$is_bundle" = true ]; then
-		apkmirror_req "$url" "${output}.apkm" || return 1
-		merge_splits "${output}.apkm" "${output}"
-	else
-		apkmirror_req "$url" "${output}" || return 1
+	req "$final_url" "$output" || return 1
+	if [ ! -s "$output" ] || ! unzip -t "$output" >/dev/null 2>&1; then
+		rm -f "$output"
+		epr "APKCombo returned an invalid or incomplete APK"
+		return 1
 	fi
 }
-get_apkmirror_vers() {
-	local vers apkm_resp
-	apkm_resp=$(apkmirror_req "https://www.apkmirror.com/uploads/?appcategory=${__APKMIRROR_CAT__}" -)
-	vers=$(sed -n 's;.*Version:</span><span class="infoSlide-value">\(.*\) </span>.*;\1;p' <<<"$apkm_resp" | awk '{$1=$1}1')
-
-	vers=$(grep -iv "\(beta\|alpha\)" <<<"$vers")
-	local v r_vers=()
-	local IFS=$'\n'
-	for v in $vers; do
-		grep -iq "${v} \(beta\|alpha\)" <<<"$apkm_resp" || r_vers+=("$v")
-	done
-	echo "${r_vers[*]}"
+get_apkcombo_vers() {
+	$HTMLQ --text ".list-versions .vername" <<<"$__APKCOMBO_RESP__" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | grep -E '^[0-9]+([.][0-9]+)+([.-][A-Za-z0-9.-]+)?$' || :
 }
-get_apkmirror_pkg_name() { sed -n 's;.*id=\(.*\)" class="accent_color.*;\1;p' <<<"$__APKMIRROR_RESP__"; }
-get_apkmirror_resp() {
-	__APKMIRROR_RESP__=$(apkmirror_req "${1}" -) || return 1
-	__APKMIRROR_CAT__="${1##*/}"
+get_apkcombo_pkg_name() { echo "${__APKCOMBO_URL__##*/}"; }
+get_apkcombo_resp() {
+	__APKCOMBO_URL="${1%/}"
+	__APKCOMBO_RESP__=$(req "${__APKCOMBO_URL}/old-versions" -) || return 1
+	# A valid versions page must contain the versions list expected by APKCombo.
+	$HTMLQ ".list-versions" <<<"$__APKCOMBO_RESP__" | grep -q . || return 1
 }
 
 # -------------------- uptodown --------------------
