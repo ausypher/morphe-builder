@@ -261,17 +261,19 @@ req() { _req "$1" "$2" -H "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:108.0)
 APKMIRROR_SESSION="morphe-patch-builder"
 apkmirror_req() {
 	local url="$1" op="$2" payload response dlp="$2"
-	local cookie_file="$TEMP_DIR/apkmirror-cookies.txt" referer_file="$TEMP_DIR/apkmirror-referer.txt" referer=""
+	local cookie_file="$TEMP_DIR/apkmirror-cookies.txt" referer_file="$TEMP_DIR/apkmirror-referer.txt" ua_file="$TEMP_DIR/apkmirror-user-agent.txt" referer="" user_agent=""
 	if [ -z "${FLARESOLVERR_URL-}" ]; then
 		req "$url" "$op"
 		return $?
 	fi
 	if [ "$op" != "-" ]; then
 		[ -f "$referer_file" ] && referer=$(cat "$referer_file")
+		[ -f "$ua_file" ] && user_agent=$(cat "$ua_file")
+		[ -n "$user_agent" ] || user_agent="Mozilla/5.0 (X11; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0"
 		mkdir -p "$(dirname "$op")"
 		if ! curl -fLsS -L --connect-timeout 10 --retry 1 \
 			-b "$cookie_file" -e "${referer:-https://www.apkmirror.com/}" \
-			-H "User-Agent: Mozilla/5.0 (X11; Linux x86_64; rv:108.0) Gecko/20100101 Firefox/108.0" \
+			-H "User-Agent: $user_agent" \
 			"$url" -o "$op"; then
 			rm -f "$op"
 			epr "APKMirror file download failed: $url"
@@ -288,8 +290,9 @@ apkmirror_req() {
 		epr "FlareSolverr could not fetch APKMirror page: $url"
 		return 1
 	fi
-	# Remember the page URL for the next step and refresh the session cookies.
+	# Remember the page URL and the browser identity used by FlareSolverr for the next download.
 	printf '%s' "$url" > "$referer_file"
+	jq -r '.solution.userAgent // empty' <<<"$response" > "$ua_file"
 	printf '# Netscape HTTP Cookie File\n' > "$cookie_file"
 	jq -r '.solution.cookies[]? | [(.domain // ".apkmirror.com"), "TRUE", (.path // "/"), (if .secure then "TRUE" else "FALSE" end), ((.expires // 0) | tostring), .name, .value] | @tsv' <<<"$response" |
 		while IFS=$'\t' read -r domain include_subdomains path secure expiry name value; do
