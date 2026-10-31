@@ -12,4 +12,5 @@ jobs:
     with:
       from_ci: false
       config_file: config-manual.toml
+      release_prefix: A9
     secrets: inherit
