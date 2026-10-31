@@ -19,6 +19,10 @@ on:
         type: string
         required: false
         default: config.toml
+      release_prefix:
+        type: string
+        required: false
+        default: ""
   workflow_dispatch:
     inputs:
       config_file:
@@ -26,6 +30,11 @@ on:
         required: true
         type: string
         default: config.toml
+      release_prefix:
+        description: "Optional prefix for the GitHub release title"
+        required: false
+        type: string
+        default: ""
 
 jobs:
   prepare:
@@ -81,6 +90,7 @@ jobs:
         id: release_tag
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_PREFIX: ${{ inputs.release_prefix }}
         shell: bash
         run: |
           set -euo pipefail
@@ -98,8 +108,12 @@ jobs:
               continue
             fi
 
+            DRAFT_TITLE="YouTube build $DATE"
+            if [ -n "$RELEASE_PREFIX" ]; then
+              DRAFT_TITLE="$RELEASE_PREFIX $DRAFT_TITLE"
+            fi
             if gh release create "$CANDIDATE" --draft --target "$GITHUB_SHA" \
-              --title "YouTube single-patch test $DATE" --notes ""; then
+              --title "$DRAFT_TITLE" --notes ""; then
               TAG="$CANDIDATE"
               break
             fi
@@ -294,6 +308,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG: ${{ needs.prepare.outputs.tag }}
+          RELEASE_PREFIX: ${{ inputs.release_prefix }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -309,9 +324,13 @@ jobs:
             exit 1
           fi
 
+          RELEASE_TITLE="$PATCH_VERSION"
+          if [ -n "$RELEASE_PREFIX" ]; then
+            RELEASE_TITLE="$RELEASE_PREFIX $RELEASE_TITLE"
+          fi
           gh release upload "$TAG" "${ASSETS[@]}" --clobber
-          gh release edit "$TAG" --title "$PATCH_VERSION" --notes-file payload/build.md --draft=false
-          echo "Published $TAG ($PATCH_VERSION)"
+          gh release edit "$TAG" --title "$RELEASE_TITLE" --notes-file payload/build.md --draft=false
+          echo "Published $TAG ($RELEASE_TITLE)"
 
       - name: Update modules changelog and update json
         if: ${{ needs.build.result == 'success' && steps.check.outputs.has_payload == 'true' && steps.publish.outcome == 'success' }}
