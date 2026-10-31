@@ -15,6 +15,10 @@ on:
         type: boolean
         required: false
         default: true
+      config_file:
+        type: string
+        required: false
+        default: config.toml
   workflow_dispatch:
 
 jobs:
@@ -178,7 +182,7 @@ jobs:
           if [ -f config.json ]; then
             ./build.sh config.json
           else
-            ./build.sh config.toml
+            ./build.sh "${{ inputs.config_file }}"
           fi
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
