@@ -22,7 +22,7 @@ on:
       release_prefix:
         type: string
         required: false
-        default: ""
+        default: "YouTube Morphe"
   workflow_dispatch:
     inputs:
       config_file:
@@ -34,7 +34,7 @@ on:
         description: "Optional prefix for the GitHub release title"
         required: false
         type: string
-        default: ""
+        default: "YouTube Morphe"
 
 jobs:
   prepare:
