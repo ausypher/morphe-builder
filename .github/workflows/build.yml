@@ -20,6 +20,12 @@ on:
         required: false
         default: config.toml
   workflow_dispatch:
+    inputs:
+      config_file:
+        description: "Config file to use for this build"
+        required: true
+        type: string
+        default: config.toml
 
 jobs:
   prepare:
