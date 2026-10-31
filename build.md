@@ -1,5 +1,4 @@
-YouTube (arm64-v8a): 21.30.216  
-YouTube (arm-v7a): 21.30.216  
+YouTube: 21.30.216  
 
 Install [MicroG-RE](https://github.com/MorpheApp/MicroG-RE/releases/latest) for non-root YouTube and YT Music APKs  
 Use [zygisk-detach](https://github.com/j-hc/zygisk-detach) to detach YouTube and YT Music modules from Play Store  
