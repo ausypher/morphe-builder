@@ -1,4 +1,4 @@
-name: Manual YouTube Build
+name: A9 YouTube manual build
 
 on:
   workflow_dispatch:
