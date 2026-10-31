@@ -17,9 +17,9 @@ Build patched APKs and modules with GitHub Actions, using configurable Morphe pa
 
 ## About this fork
 
-This repository is based on the [**builder-for-morphe**](https://github.com/nvbangg/builder-for-morphe) project.
+The core builder is based on [**elohim-etz/morphe-builder**](https://github.com/elohim-etz/morphe-builder). This project uses its build system and configuration-driven workflow as the foundation, with independent modifications and additions for this fork.
 
-The APK download flow includes components adapted from [**nvbangg/builder-for-morphe**](https://github.com/nvbangg/builder-for-morphe) for retrieving APKs from **APKMirror**. The APKMirror integration was tested in [**my-youtube-morphe**](https://github.com/ausypher/my-youtube-morphe) before being ported to this multi-app builder.
+The APK download flow also includes components adapted from [**nvbangg/builder-for-morphe**](https://github.com/nvbangg/builder-for-morphe) for retrieving APKs from **APKMirror**. The APKMirror integration was tested in [**my-youtube-morphe**](https://github.com/ausypher/my-youtube-morphe) before being ported to this multi-app builder.
 
 ### APK download priority
 
