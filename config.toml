@@ -1,4 +1,3 @@
-
 enable-module-update = true
 parallel-jobs = 1
 patches-version = "latest"
@@ -7,6 +6,7 @@ cli-version = "latest"
 [YouTube]
 app-name = "YouTube"
 enabled = true
+version = "auto"
 patches-source = "sashade8-ship-it/dual-vot-patches"
 cli-source = "MorpheApp/morphe-cli"
 rv-brand = "Morphe"
