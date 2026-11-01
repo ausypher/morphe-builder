@@ -95,12 +95,21 @@ jobs:
         run: |
           set -euo pipefail
           DATE=$(date -u +%F)
+          TIMESTAMP=$(date -u +%Y%m%d%H%M%S)
+
+          # Keep ordinary releases under stable- and mark manual A9 builds
+          # separately, while preserving a single sortable timestamp format.
+          TAG_PREFIX="stable"
+          if [ "$RELEASE_PREFIX" = "A9" ]; then
+            TAG_PREFIX="a9"
+          fi
+
           TAG=""
           for ATTEMPT in $(seq 1 100); do
             if [ "$ATTEMPT" -eq 1 ]; then
-              CANDIDATE="stable-$DATE"
+              CANDIDATE="$TAG_PREFIX-$TIMESTAMP"
             else
-              CANDIDATE="stable-$DATE-$((ATTEMPT - 1))"
+              CANDIDATE="$TAG_PREFIX-$TIMESTAMP-$((ATTEMPT - 1))"
             fi
 
             if gh release view "$CANDIDATE" >/dev/null 2>&1; then
